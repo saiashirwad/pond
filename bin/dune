@@ -1,0 +1,4 @@
+(executable
+ (public_name pond)
+ (name main)
+ (libraries pond eio_main yojson))
