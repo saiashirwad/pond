@@ -15,11 +15,11 @@ Apps produce declarative widget trees, not escape codes. Widgets (lists, editors
 
 ## Effects
 
-Apps don't touch the filesystem or spawn processes. They declare intent — `readDir`, `exec`, `watch`, `open` — and the agent fulfills it. The app doesn't know or care whether the agent is local or remote. This is what makes the programming model work over SSH without the author thinking about it.
+Apps don't touch the filesystem or spawn processes. They declare intent — `readDir`, `exec`, `watch`, `open` — and the runtime fulfills it. The app doesn't know or care whether the runtime is local or remote. This is what makes the programming model work over SSH without the author thinking about it.
 
 ## The app is a guest
 
-A Pond app doesn't own the screen, the render loop, or system access. It's a guest inside a platform — like a web app in a browser. The platform handles layout, compositing, input routing, lifecycle, and persistence. Multiple apps can be on screen at once. Apps survive disconnects because the agent holds their state.
+A Pond app doesn't own the screen, the render loop, or system access. It's a guest inside a platform — like a web app in a browser. The platform handles layout, compositing, input routing, lifecycle, and persistence. Multiple apps can be on screen at once. Apps survive disconnects because the runtime holds their state.
 
 ## Why
 
