@@ -42,6 +42,19 @@ In Pond, you write one program that declares a render tree and publishes streams
 
 The cost of building tools today is dominated by the frontend, not the logic. Pond makes the frontend a commodity — the protocol carries the structure, clients render it natively.
 
+### Beyond dashboards
+
+Pond is not a dashboard protocol. The same model covers general interactive applications — editors, file browsers, forms, configuration tools — because the protocol distinguishes two flows:
+
+1. **Effects** — user intent. "Save this file." "Restart this container." Discrete, semantic, interceptable. The runtime is the authority.
+2. **State sync** — interaction data. "The text buffer now contains X." "The selected index is 3." Continuous, mechanical. The client is the authority.
+
+A dashboard mostly uses effects: subscribe to streams, occasionally issue a command. An editor mostly uses state sync: the client manages a text buffer locally, keystrokes never round-trip, and the runtime receives structured state updates when the user commits.
+
+The protocol defines a vocabulary of interactive primitives — text buffers, selection models, sliders, toggles — with well-specified behavioral contracts. Each client SDK implements them natively for its platform. The runtime declares *what* it wants. The client decides *how*. A macOS client renders a text buffer as an NSTextView. A web client renders it as a textarea or CodeMirror. A TUI client renders a text input widget. The runtime doesn't know and doesn't care.
+
+Interactions that don't fit the built-in primitives are handled by composition (most cases) or declared as opaque regions with type hints that capable clients can render. No protocol covers everything — but a small, composable vocabulary of interactive primitives covers most applications.
+
 ## Effects and streams as agent primitives
 
 Agents don't need better GUIs. They need better primitives for interacting with the world.

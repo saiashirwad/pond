@@ -64,6 +64,16 @@ A widget can show three states:
 
 This gives fast feel without pretending the client is the authority.
 
+## Protocol realization
+
+The three-bucket model maps to two protocol flows:
+
+- **Always-local** state never hits the wire. The client manages it entirely within widget rendering.
+- **Local-first, server-authoritative** state uses `state_sync` messages. The client applies changes immediately and syncs the state to the runtime per the widget's declared sync policy (`on-commit`, `on-change`, or debounced). The runtime observes these updates but the client doesn't wait for acknowledgment.
+- **Round-trip** interactions use `input` events (select, activate, key) and effects. The client sends intent and waits for the runtime's response.
+
+Interactive widgets (text buffers, sliders, toggles) declare their sync policy in the render tree. Data-bound widgets (lists, tables) use the select/activate split from the input event model. The two mechanisms compose: a form might contain a `text-buffer` (state sync) alongside a `list` (select/activate) and a button (effect).
+
 ## v2 candidate: optimistic hints
 
 Apps could declare in the render tree what happens on interaction. Defer until the round-trip latency is a proven pain point — the three-bucket model handles v1.

@@ -20,6 +20,8 @@ Apps produce declarative widget trees, not escape codes.
 
 Widgets (lists, editors, tables, trees) handle their own scrolling, selection, and focus. The client renders them natively from structured data rather than inferring them from text. The shape of the UI changes slowly; the data inside it changes constantly.
 
+Interactive widgets carry client-managed state. A text buffer, a selection model, a slider — the client owns the interaction and syncs state back to the runtime. The protocol defines the behavioral contract for each primitive; each platform SDK implements it natively. The runtime declares what it wants, the client decides how.
+
 ### Streams
 
 Streams are named, typed, live channels of data.
@@ -35,6 +37,17 @@ Apps don't touch the filesystem, spawn processes, or open sockets directly. They
 `readDir`, `exec`, `watch`, `open` — the runtime fulfills them. Results flow back as state updates and stream events; the app redraws.
 
 Effects are plain data, which means they are serializable, inspectable, loggable, cacheable, replayable, and testable. Any language can produce them. An app can be tested by asserting which effects it emits, without performing them.
+
+### Two flows
+
+The protocol carries two distinct kinds of data between client and runtime:
+
+1. **Effects** — user intent. Discrete, semantic, named. "Save." "Delete." "Restart." The runtime decides what they mean. Effects are interceptable, loggable, and refusable.
+2. **State sync** — interaction data. Continuous, mechanical, structural. "The text buffer now contains X." "The slider is at 0.85." The client owns this state and syncs it back.
+
+Effects flow from client to runtime as requests. State sync flows from client to runtime as data. The runtime receives both but treats them differently: effects are processed, state sync is observed.
+
+This separation is what makes Pond work for general applications, not just dashboards. A monitoring tool mostly issues effects (restart, scale). A text editor mostly syncs state (buffer contents, cursor position). Both use the same protocol.
 
 ## Apps are guests
 
@@ -95,6 +108,7 @@ Resolved:
 - **Legacy PTY programs are normalized at the runtime boundary.** Pond never sends raw terminal bytes to clients, only structured terminal state. The runtime owns the PTY, feeds output into a server-side VTE, and sends cell diffs, cursor state, and mode updates. No raw-byte escape hatch. One contract, one reconnect story, one debugging surface.
 - **The `terminal` widget contains all legacy complexity.** The cell grid format (colors, attributes, wide characters, cursor state) lives inside a single optional widget type, not in the core protocol. Native Pond apps never touch it. Clients that don't implement `terminal` can still render every native Pond app — legacy PTY support is a capability, not a requirement. See [`docs/TERMINAL_WIDGET.md`](docs/TERMINAL_WIDGET.md).
 - **Client-owned widget state, server-owned application semantics.** Selection and activation are separate: the client highlights a row immediately (widget state), the server decides what happens (app state). Hover, focus, scroll, sort, filter, selection highlight — all local. Navigation, mutation, effects — round-trip. Identity-based, not index-based: interactions reference `item_id` + `render_version`, not "row 3." See [`docs/INPUT_LATENCY.md`](docs/INPUT_LATENCY.md).
+- **State sync is not effects.** The protocol distinguishes two client-to-runtime flows. Effects are user intent ("save this file") — discrete, semantic, interceptable. State sync is interaction data ("the buffer contains X") — continuous, mechanical, observational. A slider drag produces state sync. Clicking "apply" produces an effect. The runtime can ignore the slider entirely until the effect arrives, or subscribe to every change for a live preview. Interactive widgets declare their sync policy: `on-commit`, `on-change`, or debounced.
 - **Four identities, not two.** Effects are transactions (complete on commit). Resources are long-lived things the runtime manages (processes, watchers). Streams are observation surfaces on resources. Subscriptions are a client's attachment to a stream. Effects don't own streams — resources own producer bindings to streams. One effect can create multiple streams; a stream can outlive its spawning effect; reconnection works through stable stream IDs, not effect replay.
 - **Reconnection is snapshot-first.** On reconnect, the runtime sends full current state per app (render tree + bound stream snapshots), focused app first. No deltas, no replay log, no progressive restore. Seq numbers continue, don't reset. Client-owned widget state (scroll position, selections, input contents) is lost in v1. A typical session is ~200KB; even a heavy 20-app session is ~2MB — under a second on any real connection.
 

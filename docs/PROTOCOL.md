@@ -59,11 +59,12 @@ The client is not required to implement priority queues. Client-to-runtime messa
 | `kill` | client -> runtime | `app_id`, `signal` | Terminate an application |
 | `input` | client -> runtime | `app_id`, `event` | Send user input to an application |
 | `subscribe` | client -> runtime | `stream`, `active` | Subscribe to or unsubscribe from a stream |
+| `state_sync` | client -> runtime | `app_id`, `node_id`, `state`, `render_version` | Sync client-managed widget state to the runtime |
 | `render` | runtime -> client | `app_id`, `tree`, `version`, `streams` | Deliver a full render tree with bound stream data |
 | `data` | runtime -> client | `stream`, `seq`, `payload` | Deliver stream data |
 | `app_event` | runtime -> client | `app_id`, `status`, `detail` | Report application lifecycle events |
 
-9 message types total: 5 client-to-runtime, 4 runtime-to-client.
+10 message types total: 6 client-to-runtime, 4 runtime-to-client.
 
 ## Client-to-runtime messages
 
@@ -225,6 +226,43 @@ Subscribe to or unsubscribe from a stream for out-of-band observation. This is f
 
 When `active` is `true`, the runtime begins sending `data` messages for the stream. When `active` is `false`, delivery stops. Subscribing to a nonexistent stream is not an error; delivery begins when the stream is created.
 
+### `state_sync`
+
+Sync client-managed widget state to the runtime. This is distinct from `input`: input events carry user intent (select, activate, key press), while `state_sync` carries the current value of client-owned interactive state (buffer contents, slider position, toggle value).
+
+```json
+{
+  "type": "state_sync",
+  "app_id": "editor-1",
+  "node_id": "search-input",
+  "render_version": 7,
+  "state": {
+    "value": "fn main",
+    "cursor": 7,
+    "selection": null
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `app_id` | string | yes | Target application. |
+| `node_id` | string | yes | The `id` of the widget whose state is being synced. |
+| `render_version` | uint | yes | The render version the client is displaying. Used for stale-state detection. |
+| `state` | map | yes | The widget's current client-managed state. Structure depends on the widget type. |
+
+The runtime may ignore `state_sync` messages with a stale `render_version`.
+
+When `state_sync` messages are sent depends on the widget's declared `sync` policy:
+
+| Policy | Behavior |
+|---|---|
+| `"on-commit"` | Client sends state when the user commits (blur, Enter, explicit save). Default. |
+| `"on-change"` | Client sends state on every change. |
+| `{ "debounce": <ms> }` | Client sends state after `<ms>` milliseconds of inactivity. |
+
+The sync policy is a hint from the runtime to the client. The client should respect it but the runtime must tolerate receiving `state_sync` at any time.
+
 ## Runtime-to-client messages
 
 ### `welcome`
@@ -332,7 +370,45 @@ The `streams` map ensures the client receives tree + data as one atomic frame. N
 
 Every widget has at least `type` (string) and `id` (string). Widgets may have `props` (map), `bind` (string, stream address), `children` ([Widget]), and `fallback` (Widget, used when the client lacks a required capability).
 
-Core widget types: `text`, `list`, `table`, `tree`, `input`, `column`, `row`, `terminal`. The `terminal` widget is optional; see Terminal Widget section.
+Interactive widgets additionally carry:
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | map | Initial client-managed state. The client owns this state locally and syncs it back via `state_sync`. |
+| `sync` | string or map | Sync policy: `"on-commit"` (default), `"on-change"`, or `{ "debounce": <ms> }`. |
+
+Example — a text buffer with debounced sync for live search:
+
+```json
+{
+  "type": "text-buffer",
+  "id": "search-input",
+  "props": { "placeholder": "Search...", "max_length": 256 },
+  "state": { "value": "", "cursor": 0, "selection": null },
+  "sync": { "debounce": 150 }
+}
+```
+
+Example — a slider that syncs on every change for live preview:
+
+```json
+{
+  "type": "slider",
+  "id": "threshold",
+  "props": { "min": 0, "max": 1, "step": 0.01 },
+  "state": { "value": 0.5 },
+  "sync": "on-change"
+}
+```
+
+On reconnect, client-managed state is lost. The runtime re-sends the render tree with initial `state` values, and the client starts fresh. This is consistent with the snapshot-first reconnection model.
+
+Core widget types:
+
+- **Display**: `text`, `column`, `row` — no client state, render only.
+- **Data-bound**: `list`, `table`, `tree` — bind to streams, support selection (always-local widget state per INPUT_LATENCY.md).
+- **Interactive**: `text-buffer`, `input`, `slider`, `toggle`, `select` — carry client-managed `state` and a `sync` policy.
+- **Legacy**: `terminal` — optional, see Terminal Widget section.
 
 ### `data`
 
@@ -1145,6 +1221,15 @@ Streams referenced by a `bind` field in a render tree are delivered automaticall
 ### Output caps
 
 The runtime caps buffered output per application at approximately 64 KB. If an app produces data faster than the wire can drain it, the runtime drops intermediate frames and sends the latest state. Since `render` is full-tree replacement and `data` carries complete stream values, dropping intermediate frames is safe -- the client always receives a consistent latest state.
+
+### `state_sync` vs `input`
+
+Both flow from client to runtime, but they serve different purposes:
+
+- `input` carries user intent: "select this item", "activate this row", "press this key." The runtime interprets the meaning.
+- `state_sync` carries interaction data: "the buffer now contains X", "the slider is at 0.85." The client owns the state and reports its current value.
+
+A text editor example: every keystroke updates the buffer locally (no wire message). The `state_sync` fires per the sync policy (debounced, on-change, or on-commit). When the user presses Ctrl+S, that's an `input` event with `kind: "key"` that the app interprets as "save" — or an effect, depending on the app's design. The buffer contents arrived via `state_sync`; the save intent arrived via `input`.
 
 ### Encoding negotiation
 
