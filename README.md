@@ -44,6 +44,14 @@ Everything else is the platform's problem.
 - **Runtime** — persistent daemon on servers. Manages sessions, fulfills effects, holds state across disconnects.
 - **Client** — anything that speaks the protocol. Native app, web page, TUI — doesn't matter.
 
+### Runtime
+
+- Single static binary, no dependencies — uploaded over SSH on first connect, zero setup
+- Does everything apps can't: fulfills effects, manages sessions, wraps legacy programs (bash, vim) in PTYs
+- Holds state across disconnects — when you reconnect, it sends back structured state, not a character grid
+- The client gets actual data, render trees, and session structure — redraws natively
+- Think tmux, but the server keeps real state instead of a grid of characters
+
 ## What it replaces
 
 | Today | Pond |
