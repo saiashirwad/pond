@@ -72,11 +72,6 @@ The wire carries state, not terminal emulation.
   - It requires version-tagged render trees, sequence-numbered streams, and a protocol for deciding delta vs. snapshot
   - Should input events carry the render version they were based on so the server can detect stale operations?
   - What happens to effects that completed while the client was disconnected?
-- **How are PTY programs represented on the wire?**
-  - Raw escape sequences to the client (like xterm.js) or structured cell grids from a server-side VTE?
-  - Raw bytes mean every client must embed a terminal emulator
-  - Cell grids mean the protocol must specify the cell format as a first-class commitment — but give structured reconnection
-  - Server-side VTE locks the protocol's capability ceiling to the VTE library's ceiling
 - **Is SSH's flow control sufficient?**
   - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
   - TCP treats all bytes equally
@@ -112,6 +107,15 @@ The wire carries state, not terminal emulation.
   - Shell startup banners and `~/.bashrc` output corrupt framing
   - The runtime must daemonize without dying on SIGHUP when SSH drops
   - Binary upload (5-10MB) over a slow uplink blocks everything until complete
+
+## Design decisions
+
+- **Bind implies observation.** A render tree that references a stream is a declarative dependency — the runtime delivers that stream's data automatically. Clients don't send `subscribe` for bound streams. Explicit `subscribe` exists only for out-of-band observation (dashboards, inspectors, debuggers).
+- **Resource lifecycle ≠ observation lifecycle.** A process doesn't die because the last widget unbound from its stream. Bind controls delivery to the client, not ownership of the underlying resource.
+- **Render tree + bound data = one logical frame.** When the runtime sends a new render tree (or restores one on reconnect), it sends the current snapshot of all bound streams in the same logical commit. No blank flashes, no race between tree and data.
+- **Priority send queues + per-program output caps are sufficient for v1.** tmux has the same single-connection architecture and handles it with kernel backpressure alone. The runtime drains control messages (input, kill, errors) before data, and caps per-program buffered output (~64KB). Credit-based flow control and multi-connection splits are available as escape hatches if real usage demands them.
+- **Effects are internal to the runtime.** The client never sees effects. Apps and runtime live on the server; effects are fulfilled locally over pipes. The wire carries only the results: render trees, stream data, input events.
+- **Legacy PTY programs are normalized at the runtime boundary.** Pond never sends raw terminal bytes to clients, only structured terminal state. The runtime owns the PTY, feeds output into a server-side VTE, and sends cell diffs, cursor state, and mode updates. Clients render cells — no VT parser required. No raw-byte escape hatch in v1. One contract, one reconnect story, one debugging surface.
 
 ## Status
 
