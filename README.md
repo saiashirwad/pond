@@ -92,6 +92,30 @@ Everything else is the platform's problem.
 | Scrollback in escape codes | Structured virtualized rendering |
 
 
+## Open questions
+
+- **Are effects and streams one lifecycle or two?**
+  - An `exec` effect completes instantly (process started) but its stdout stream runs for hours
+  - A `watch` is ephemeral; an `exec` creates a durable resource (a PID)
+  - If stream termination is coupled to effect completion, streams can't outlive their spawning effect, one effect can't produce multiple independent streams, and reconnection to running processes becomes impossible
+- **How does the protocol evolve without breaking clients?**
+  - If unknown message types are fatal, adding any new type breaks every deployed client
+  - If they're silently ignored, old clients coexist with new runtimes
+  - The harder question: when do you need a capability flag (behavioral change, like "I understand render diffs") vs. just adding a field to an existing message (data change, which MessagePack handles for free)?
+- **What can an app do by default?**
+  - Right now any app can `exec` arbitrary commands, read any path, subscribe to any stream — zero isolation
+  - Should apps declare capabilities upfront (Android permission model)?
+  - Should the default be CWD-only for reads, nothing for writes and exec unless explicitly granted?
+- **How does reconnection transfer state?**
+  - This is what makes Pond different from tmux (character grid replay)
+  - It requires version-tagged render trees, sequence-numbered streams, and a protocol for deciding delta vs. snapshot
+  - Should input events carry the render version they were based on so the server can detect stale operations?
+  - What happens to effects that completed while the client was disconnected?
+- **Is SSH's flow control sufficient?**
+  - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
+  - TCP treats all bytes equally
+  - Does the protocol need its own priority queues (input before renders, renders before bulk data), per-stream throttling, and window-based flow control for large transfers?
+
 ## Status
 
 Design phase.
