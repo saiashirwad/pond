@@ -46,19 +46,12 @@ Apps survive disconnects — the runtime, not the client, holds their state. Whe
 
 ## Architecture
 
-```
-┌─────── Server ──────────────────┐
-│                                  │
-│  Apps ←──effects──→ Runtime      │
-│       ←─stream updates─→         │
-│                                  │
-└──────────────┬───────────────────┘
-               │ SSH
-               │ (render trees, stream data, input events)
-┌──────────────┴───────────────────┐
-│            Client                 │
-│   native rendering + input + UX  │
-└───────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Server
+        Apps <-- "effects & stream updates" --> Runtime
+    end
+    Server <-- "SSH: render trees, stream data, input events" --> Client["Client (native rendering + input + UX)"]
 ```
 
 - **Apps** describe UI and request work.
