@@ -21,11 +21,20 @@ Pond replaces that with a simple model: programs describe **what** to show, the 
 
 ## Programming model
 
-A Pond app is a function from state to UI. Describe what to show, declare what should happen — the platform handles everything else. No escape codes, no render loops, no manual input handling.
+A Pond app has two jobs:
 
-System interactions are **effects** — declared intent, not direct calls. An app doesn't read a directory or spawn a process. It declares `readDir(path)` or `exec(cmd)`, and the runtime fulfills it. Results flow back as state updates, the render tree redraws. The app never touches the filesystem, manages a PTY, or deals with async plumbing. This is what makes local and remote feel identical — the runtime handles it, wherever it's running.
+1. **Describe what to show** — given current state, return a render tree
+2. **Declare what should happen** — when the user interacts, emit effects
 
-See [`DESIGN.md`](DESIGN.md) for more.
+Everything else — rendering, layout, input, process management, file I/O, reconnection — is the platform's problem.
+
+**Render trees**: Apps produce declarative widget trees, not escape codes. Widgets (lists, editors, tables, trees) know how to be themselves — scrolling, selection, focus are built in. The app says *what*, the platform decides *how*.
+
+**Effects**: Apps don't touch the filesystem or spawn processes. They declare intent — `readDir`, `exec`, `watch`, `open` — and the runtime fulfills it. Results flow back as state updates, the render tree redraws. The app doesn't know or care whether the runtime is local or remote.
+
+Effects are serializable — plain data, not function calls. `{"effect": "readDir", "path": "/home/user"}` is a message any language can produce and any runtime can fulfill. Because effects are data, the runtime can inspect, log, cache, replay, or deduplicate them. This also means effects are testable — assert that an app emits the right effects for a given state without actually performing them.
+
+**The app is a guest**: A Pond app doesn't own the screen, the render loop, or system access. It's a guest inside a platform — like a web app in a browser. The platform handles layout, compositing, input routing, lifecycle, and persistence. Multiple apps can be on screen at once. Apps survive disconnects because the runtime holds their state.
 
 ## What it replaces
 
@@ -39,7 +48,6 @@ See [`DESIGN.md`](DESIGN.md) for more.
 
 ## Docs
 
-- [`DESIGN.md`](DESIGN.md) — programming model: state → UI, declared effects
 - [`docs/REFERENCE.md`](docs/REFERENCE.md) — technical references, data structures, proven systems to study
 
 ## Status
