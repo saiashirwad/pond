@@ -38,6 +38,12 @@ runtime/streams  ->  [{ address, schema, mode, version, update_rate_hz, subscrib
 runtime/wire  ->  { send_buffer_bytes, recv_buffer_bytes, msgs_per_sec, priority_queue_depths }
 ```
 
+**Network (when connected to peers or relays):**
+```
+runtime/peers  ->  [{ name, identity, address, last_seen, status, streams_published }]
+runtime/capabilities  ->  [{ client_id, grants, issued_at, expires }]
+```
+
 These are state-mode streams with schemas, versioning, and the same update semantics as any app's output.
 
 ## What becomes commands

@@ -51,34 +51,21 @@ flowchart TB
     subgraph Server
         Apps <-- "effects & stream updates" --> Runtime
     end
-    Server <-- "SSH: render trees, stream data, input events" --> Client["Client (native rendering + input + UX)"]
+    Server <-- "render trees, stream data, input events" --> Client["Client (native rendering + input + UX)"]
 ```
 
 - **Apps** describe UI and request work.
-- **Runtime** fulfills effects locally on the server, owns durable state, and manages sessions. Single static binary, no dependencies — uploaded over SSH on first connect. Wraps legacy programs (bash, vim) in PTYs as a compatibility layer; native Pond apps are the primary model.
+- **Runtime** fulfills effects locally on the server, owns durable state, and manages sessions. Written in OCaml. Wraps legacy programs (bash, vim) in PTYs as a compatibility layer; native Pond apps are the primary model.
 - **Client** renders structured UI, sends input events back. Roughly 6-7 message types in each direction. Swappable — any client works, no app knows the difference.
 
 The wire carries state, not terminal emulation.
 
 ## Open questions
 
-### Blocking v1
-
-- **Is SSH's flow control sufficient?**
-  - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
-  - TCP treats all bytes equally
-  - Does the protocol need its own priority queues (input before renders, renders before bulk data), per-stream throttling, and window-based flow control for large transfers?
-- **What can an app do by default?**
-  - Right now any app can `exec` arbitrary commands, read any path, subscribe to any stream — zero isolation
-  - Should apps declare capabilities upfront (Android permission model)?
-  - Should the default be CWD-only for reads, nothing for writes and exec unless explicitly granted?
-
-### Can wait
-
 - **How does the protocol evolve without breaking clients?**
   - If unknown message types are fatal, adding any new type breaks every deployed client
   - If they're silently ignored, old clients coexist with new runtimes
-  - The harder question: when do you need a capability flag (behavioral change, like "I understand render diffs") vs. just adding a field to an existing message (data change, which MessagePack handles for free)?
+  - When do you need a capability flag (behavioral change, like "I understand render diffs") vs. just adding a field to an existing message?
 - **Where does input translation happen?**
   - For native Pond widgets the client can translate "user pressed j" into "select row 4" with zero round trips
   - For PTY programs the runtime must translate structured key events back to escape sequences, which requires tracking terminal mode state
@@ -91,21 +78,19 @@ The wire carries state, not terminal emulation.
   - A 10,000-row table where only 50 rows are visible — locally (React, Flutter) this is solved, over a wire it isn't
   - The server must materialize rows fast enough for 60Hz scrolling, with pre-fetch to absorb round-trip latency
   - No existing wire protocol solves this
-- **JSON or MessagePack by default?**
-  - JSON is debuggable, universal, and requires no library — `echo '{"type":"hello","version":1}' | nc -U ~/.pond/runtime.sock` just works
-  - MessagePack is 34% smaller but unreadable without tools
-  - SSH compresses both — does v1 ship debuggable and optimize later, or start binary?
-- **How does SSH bootstrap actually work?**
-  - Shell startup banners and `~/.bashrc` output corrupt framing
-  - The runtime must daemonize without dying on SIGHUP when SSH drops
-  - Binary upload (5-10MB) over a slow uplink blocks everything until complete
+
+Resolved:
+- Flow control and priority: [`docs/TRANSPORT.md`](docs/TRANSPORT.md) — application-level queues in v1, transport-level stream priority in v2 (QUIC)
+- Wire format: [`docs/TRANSPORT.md`](docs/TRANSPORT.md) — MessagePack with length-prefixed framing
+- Bootstrap: [`docs/TRANSPORT.md`](docs/TRANSPORT.md) — SSH exec avoids shell banners; native QUIC connection avoids SSH entirely
+- App capabilities: [`docs/NETWORK.md`](docs/NETWORK.md) — capability tokens scope what each client and app can do
 
 ## Design decisions
 
 - **Bind implies observation.** A render tree that references a stream is a declarative dependency — the runtime delivers that stream's data automatically. Clients don't send `subscribe` for bound streams. Explicit `subscribe` exists only for out-of-band observation (dashboards, inspectors, debuggers).
 - **Resource lifecycle ≠ observation lifecycle.** A process doesn't die because the last widget unbound from its stream. Bind controls delivery to the client, not ownership of the underlying resource.
 - **Render tree + bound data = one logical frame.** When the runtime sends a new render tree (or restores one on reconnect), it sends the current snapshot of all bound streams in the same logical commit. No blank flashes, no race between tree and data.
-- **Priority send queues + per-program output caps are sufficient for v1.** tmux has the same single-connection architecture and handles it with kernel backpressure alone. The runtime drains control messages (input, kill, errors) before data, and caps per-program buffered output (~64KB). Credit-based flow control and multi-connection splits are available as escape hatches if real usage demands them.
+- **Priority send queues for v1, transport-level priority for v2.** In v1, the runtime drains control messages (input, kill, errors) before data, and caps per-program buffered output (~64KB). In v2, each Pond stream maps to a QUIC stream with independent flow control — the transport handles priority natively. See [`docs/TRANSPORT.md`](docs/TRANSPORT.md).
 - **Effects are internal to the runtime.** The client never sees effects. Apps and runtime live on the server; effects are fulfilled locally over pipes. The wire carries only the results: render trees, stream data, input events.
 - **Legacy PTY programs are normalized at the runtime boundary.** Pond never sends raw terminal bytes to clients, only structured terminal state. The runtime owns the PTY, feeds output into a server-side VTE, and sends cell diffs, cursor state, and mode updates. No raw-byte escape hatch. One contract, one reconnect story, one debugging surface.
 - **The `terminal` widget contains all legacy complexity.** The cell grid format (colors, attributes, wide characters, cursor state) lives inside a single optional widget type, not in the core protocol. Native Pond apps never touch it. Clients that don't implement `terminal` can still render every native Pond app — legacy PTY support is a capability, not a requirement. See [`docs/TERMINAL_WIDGET.md`](docs/TERMINAL_WIDGET.md).
@@ -113,6 +98,12 @@ The wire carries state, not terminal emulation.
 - **Four identities, not two.** Effects are transactions (complete on commit). Resources are long-lived things the runtime manages (processes, watchers). Streams are observation surfaces on resources. Subscriptions are a client's attachment to a stream. Effects don't own streams — resources own producer bindings to streams. One effect can create multiple streams; a stream can outlive its spawning effect; reconnection works through stable stream IDs, not effect replay.
 - **Reconnection is snapshot-first.** On reconnect, the runtime sends full current state per app (render tree + bound stream snapshots), focused app first. No deltas, no replay log, no progressive restore. Seq numbers continue, don't reset. Client-owned widget state (scroll position, selections, input contents) is lost in v1. A typical session is ~200KB; even a heavy 20-app session is ~2MB — under a second on any real connection.
 
+## Implementation
+
+OCaml. The protocol is message types as algebraic variants, the runtime is an effect interpreter, and the render tree is a recursive type — all things OCaml was built for.
+
+Apps can be written in any language — they communicate with the runtime over stdin/stdout using the wire protocol. OCaml is the runtime language, not the app language.
+
 ## Status
 
-Design phase.
+Building the protocol and runtime.
