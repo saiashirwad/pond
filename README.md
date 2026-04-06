@@ -54,9 +54,6 @@ Everything else is the platform's problem.
 | ncurses TUIs | Declarative widgets (lists, tables, trees) |
 | Scrollback in escape codes | Structured virtualized rendering |
 
-## Docs
-
-- [`docs/REFERENCE.md`](docs/REFERENCE.md) — technical references, data structures, proven systems to study
 
 ## Status
 
