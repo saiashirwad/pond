@@ -6,16 +6,18 @@ It's a structured interface protocol — a universal contract for how programs d
 
 ## AI agents
 
-Today, LLM agents control computers by taking screenshots, running them through vision models, and guessing where to click. This is like navigating a city by analyzing satellite photos instead of reading street signs.
+The agent win is not "structured GUIs instead of screenshots." Agents don't need better GUIs — the industry is converging on tool-calling protocols, function calling, and SDKs. Most agent tasks (code editing, file management, data analysis) already have structured interfaces.
 
-A Pond agent gets the render tree as structured data. It knows there's a table with columns pid/name/cpu. It selects by item_id, not pixel coordinates. Its actions are effects — the same serializable intents a human triggers. The runtime can inspect every effect before fulfilling it.
+The real win is **effects and streams as agent primitives.**
 
-- Agent safety is capability enforcement on effects — already in the design
-- Agent observability is subscribing to `runtime/effects` — already a stream
-- Agent debugging is replaying serializable effect logs — already possible
-- Multi-agent collaboration is subscribing to the same typed streams — already how composition works
+- **Serializable effects** mean every agent action is logged, inspectable, and replayable by construction. Not best-effort logging bolted on afterward — completeness by architecture.
+- **Runtime interception** means effects can be refused before they happen. This is the precondition for agent safety — not safety "for free," but safety that's *possible to implement correctly*, which most systems make structurally difficult.
+- **Typed stream composition** means multi-step workflows get real structure. An agent orchestrating build-then-test-then-deploy subscribes to typed streams between stages, not parsing stdout.
+- **Shared sessions** are where the render tree matters for agents. A human and an agent on the same runtime see the same structured state — the human as a GUI, the agent as typed data. Teaching, pair debugging, supervised autonomy.
 
-Pond doesn't need an "agent mode." An agent is just another program.
+Where Pond genuinely helps agents: multi-step workflows, system monitoring, teaching/tutoring, sysadmin. Where it doesn't matter: code editing, file management, data analysis, web browsing — these already have better-than-GUI interfaces for agents.
+
+An agent is just another program. No special mode needed. But the value is the effect system and stream composition, not the render tree.
 
 ## Collaboration
 
