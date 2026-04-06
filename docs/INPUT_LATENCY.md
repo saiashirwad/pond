@@ -1,47 +1,69 @@
 # Input Latency
 
-## The split
+## Principle
 
-Widget interactions fall into two categories:
+Pond does not make every interaction optimistic. It makes common widget state local-first, while leaving application meaning authoritative on the runtime.
 
-**Client-local (no round-trip):**
-- Sorting a table column
-- Filtering/searching within a dataset the client already has
-- Scrolling
-- Selection highlighting (the visual feedback of "this row is selected")
-- Tab switching (if tab content is already loaded)
-- Expanding/collapsing tree nodes the client has data for
-- Text input echo (show the keystroke immediately)
+The client doesn't predict what the app will do. It owns what the widget itself should obviously do.
 
-**Server round-trip (~200ms on typical SSH):**
-- Navigating to a new view (clicking a directory in a file browser)
-- Submitting a form or command
-- Deleting/creating/mutating a resource
-- Any action that changes app state
+## Selection vs activation
 
-## Why the split exists
+A table row click is not one thing. It's two:
 
-Over SSH, a round-trip is ~100-400ms. For text typing, the client applies keystrokes optimistically (show immediately, sync later). But for actions like "user clicked row 3," the client can't predict what the app will do — it might navigate, expand, filter, or do nothing. So those take a round-trip.
+- **Selection** — "this row is highlighted." Widget-local state. The client does this immediately.
+- **Activation** — "do the app's action for this row." Application-semantic state. This round-trips to the server.
 
-This is the same model the web uses. Clicking a link takes a round-trip. Sorting a table client-side is instant. Users are trained for this.
+These must be separate events in the protocol: `SelectionChanged` is not `Activated`. This single separation makes tables, lists, trees, and menus feel fast without a general optimistic-hints system.
 
-## v1 rule
+## Three buckets
 
-The client owns sort, filter, scroll, and selection highlight. These never generate a message to the runtime.
+### Always local
 
-Actions (navigate, submit, delete, toggle) send an `input` event and wait for a new `render` or `data` message. The client may optimistically highlight the selected row, but does not predict the app's response.
+The client owns these entirely. No message to the runtime.
+
+- Hover, pressed, focus
+- Caret and text selection
+- Scroll position and viewport
+- Selection highlight
+- Dropdown open/close
+- Tree expand/collapse when children are already materialized
+- Sort/filter when the client holds the full relevant dataset
+
+### Local-first, server-authoritative
+
+The client applies immediate visual feedback, then reconciles against server state.
+
+- Row/item selection model
+- Checkbox toggle appearance
+- Tree expansion that may require fetching more data
+- Menu choice highlight before commit
+
+A row click: (1) client immediately shows the row as selected, (2) client sends `select(item_id, render_version)`, (3) server either confirms, replaces the view, or ignores it.
+
+### Round-trip by default
+
+The client sends an event and waits for the server's response.
+
+- Navigation (opening a new view)
+- Lazy data fetch
+- Opening detail panes
+- Executing effects
+- Mutations whose meaning depends on app logic
+- Sort/filter when the client doesn't hold enough data locally
+
+## Identity
+
+Interactions should use stable item identity, not visible index. "Row 3" is brittle under streaming updates, sorting, and filtering. The client sends `item_id` + `render_version`, not a row number. This also feeds into reconnect and stale-operation detection.
+
+## Tentative state
+
+A widget can show three states:
+- Current local selection
+- Whether that selection is pending confirmation
+- Last confirmed server state
+
+This gives fast feel without pretending the client is the authority.
 
 ## v2 candidate: optimistic hints
 
-Apps could declare in the render tree what happens on interaction:
-
-```json
-{
-  "type": "list",
-  "bind": "files",
-  "on_select": { "optimistic": "highlight" },
-  "on_action": { "navigate": { "optimistic": "loading" } }
-}
-```
-
-The client applies the hint immediately and corrects when the server responds. This is how optimistic UI works in React/Apollo. Adds complexity to the render tree spec — defer until the round-trip latency is a proven pain point.
+Apps could declare in the render tree what happens on interaction. Defer until the round-trip latency is a proven pain point — the three-bucket model handles v1.
