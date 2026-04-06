@@ -31,6 +31,14 @@ Everything else is the platform's problem.
   - The runtime can inspect, log, cache, replay, or deduplicate them
   - Testable — assert an app emits the right effects without performing them
 
+### Composition
+
+- Programs compose by subscribing to each other's streams — not by piping text
+- Streams are named, typed, and live — multiple consumers at once, no parsing
+- A transform is just a program that subscribes to a stream and emits a new one
+- Each intermediate stream is independently observable and subscribable
+- No process spawning per query — subscriptions are persistent, data just flows
+
 ### The app is a guest
 
 - Apps don't own the screen, the render loop, or system access
