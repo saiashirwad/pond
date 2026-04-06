@@ -64,14 +64,6 @@ The wire carries state, not terminal emulation.
 
 ### Blocking v1
 
-- **Are effects and streams one lifecycle or two?**
-  - An `exec` effect completes instantly (process started) but its stdout stream runs for hours
-  - A `watch` is ephemeral; an `exec` creates a durable resource (a PID)
-  - If stream termination is coupled to effect completion, streams can't outlive their spawning effect, one effect can't produce multiple independent streams, and reconnection to running processes becomes impossible
-- **How does reconnection transfer state?**
-  - It requires version-tagged render trees, sequence-numbered streams, and a protocol for deciding delta vs. snapshot
-  - Should input events carry the render version they were based on so the server can detect stale operations?
-  - What happens to effects that completed while the client was disconnected?
 - **Is SSH's flow control sufficient?**
   - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
   - TCP treats all bytes equally
@@ -118,6 +110,8 @@ The wire carries state, not terminal emulation.
 - **Legacy PTY programs are normalized at the runtime boundary.** Pond never sends raw terminal bytes to clients, only structured terminal state. The runtime owns the PTY, feeds output into a server-side VTE, and sends cell diffs, cursor state, and mode updates. No raw-byte escape hatch. One contract, one reconnect story, one debugging surface.
 - **The `terminal` widget contains all legacy complexity.** The cell grid format (colors, attributes, wide characters, cursor state) lives inside a single optional widget type, not in the core protocol. Native Pond apps never touch it. Clients that don't implement `terminal` can still render every native Pond app — legacy PTY support is a capability, not a requirement. See [`docs/TERMINAL_WIDGET.md`](docs/TERMINAL_WIDGET.md).
 - **Client-owned widget state, server-owned application semantics.** Selection and activation are separate: the client highlights a row immediately (widget state), the server decides what happens (app state). Hover, focus, scroll, sort, filter, selection highlight — all local. Navigation, mutation, effects — round-trip. Identity-based, not index-based: interactions reference `item_id` + `render_version`, not "row 3." See [`docs/INPUT_LATENCY.md`](docs/INPUT_LATENCY.md).
+- **Four identities, not two.** Effects are transactions (complete on commit). Resources are long-lived things the runtime manages (processes, watchers). Streams are observation surfaces on resources. Subscriptions are a client's attachment to a stream. Effects don't own streams — resources own producer bindings to streams. One effect can create multiple streams; a stream can outlive its spawning effect; reconnection works through stable stream IDs, not effect replay.
+- **Reconnection is snapshot-first.** On reconnect, the runtime sends full current state per app (render tree + bound stream snapshots), focused app first. No deltas, no replay log, no progressive restore. Seq numbers continue, don't reset. Client-owned widget state (scroll position, selections, input contents) is lost in v1. A typical session is ~200KB; even a heavy 20-app session is ~2MB — under a second on any real connection.
 
 ## Status
 
