@@ -31,8 +31,3 @@ Pond replaces that with a simple model: programs describe **what** to show, the 
 
 Design phase. Protocol spec in progress.
 
-## Key docs
-
-- `docs/PROTOCOL.md` — wire protocol spec (planned)
-- `docs/ARCHITECTURE.md` — system design (planned)
-
