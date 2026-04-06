@@ -115,6 +115,39 @@ Everything else is the platform's problem.
   - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
   - TCP treats all bytes equally
   - Does the protocol need its own priority queues (input before renders, renders before bulk data), per-stream throttling, and window-based flow control for large transfers?
+- **How are PTY programs represented on the wire?**
+  - Raw escape sequences to the client (like xterm.js) or structured cell grids from a server-side VTE?
+  - Raw bytes mean every client must embed a terminal emulator
+  - Cell grids mean the protocol must specify the cell format as a first-class commitment — but give structured reconnection
+  - Server-side VTE locks the protocol's capability ceiling to the VTE library's ceiling
+- **Where does input translation happen?**
+  - For native Pond widgets the client can translate "user pressed j" into "select row 4" with zero round trips
+  - For PTY programs the runtime must translate structured key events back to escape sequences, which requires tracking terminal mode state
+  - These are fundamentally different paths through the same protocol
+- **Is layout in the protocol?**
+  - Multiple apps visible at once — does the protocol carry where each app is on screen, or does the client own layout entirely?
+  - If the client owns it, resize events need per-program viewport sizes
+  - If the protocol owns it, every client must agree on a layout model
+- **How do virtualized lists work over a wire?**
+  - A 10,000-row table where only 50 rows are visible — locally (React, Flutter) this is solved, over a wire it isn't
+  - The server must materialize rows fast enough for 60Hz scrolling, with pre-fetch to absorb round-trip latency
+  - No existing wire protocol solves this
+- **JSON or MessagePack by default?**
+  - JSON is debuggable, universal, and requires no library — `echo '{"type":"hello","version":1}' | nc -U ~/.pond/runtime.sock` just works
+  - MessagePack is 34% smaller but unreadable without tools
+  - SSH compresses both — does v1 ship debuggable and optimize later, or start binary?
+- **How does SSH bootstrap actually work?**
+  - Shell startup banners and `~/.bashrc` output corrupt framing
+  - The runtime must daemonize without dying on SIGHUP when SSH drops
+  - Binary upload (5-10MB) over a slow uplink blocks everything until complete
+
+## Findings
+
+- **No distributed systems machinery needed.** One server, one client, ordered transport, server is authority. No CRDTs, no vector clocks, no consensus. Revisit only for multi-user collaboration
+- **Reconnect is the killer feature.** Tmux replays a character grid (~50-200KB every time). Pond sends versioned deltas (~2KB). But only if versioning and snapshot-or-delta selection are nailed
+- **Steady-state monitoring is 100-375x more bandwidth-efficient** than terminal redraws. A 1Hz htop goes from ~25KB/sec to ~80B/sec after the initial render tree
+- **Program identity comes from the connection, not the message body.** Each app communicates over its own pipe — the runtime stamps program identity from the file descriptor. Apps can't spoof each other
+- **PTY programs are fundamentally more expensive** than native Pond apps — per-keystroke overhead is 55x (55 bytes vs 1 byte), plus VTE parsing and cell diffing on every frame
 
 ## Status
 
