@@ -1,50 +1,48 @@
 # Pond
 
-A terminal replacement built around a structured render protocol.
+A structured protocol for remote interfaces.
 
-The terminal stack hasn't changed since the 1970s. Pond replaces it: programs describe **what** to show, the platform decides **how**.
+The terminal is still a byte stream pretending to be a UI system. Remote programs emit escape codes, clients reconstruct screens, and reconnect means replaying characters instead of restoring state. Pond replaces that boundary.
 
-## How it works
+A Pond app does not paint a terminal. It declares:
 
-A Pond app has two jobs:
+1. **What should be visible** — a render tree
+2. **What data it consumes or publishes** — typed streams
+3. **What work it wants done** — effects
 
-1. **Describe what to show** — return a render tree
-2. **Declare what should happen** — emit effects
+Everything else belongs to the platform.
 
-Everything else is the platform's problem.
+## The model
 
 ### Render trees
 
-- Apps produce declarative widget trees, not escape codes
-- Widgets (lists, editors, tables, trees) handle their own scrolling, selection, focus
-- Views bind to **streams** — named, typed, live data that any program can publish or subscribe to
-- Data updates constantly; the view structure rarely changes
+Apps produce declarative widget trees, not escape codes.
+
+Widgets (lists, editors, tables, trees) handle their own scrolling, selection, and focus. The client renders them natively from structured data rather than inferring them from text. The shape of the UI changes slowly; the data inside it changes constantly.
+
+### Streams
+
+Streams are named, typed, live channels of data.
+
+Any program can publish to a stream or subscribe to one. Multiple consumers can observe the same stream at once. A transform is just another program: subscribe to one stream, publish another.
+
+This makes composition explicit. Programs do not scrape text from one another's stdout. They exchange structured, typed data. Each intermediate stream is independently observable and subscribable.
 
 ### Effects
 
-- Apps don't touch the filesystem or spawn processes — they declare intent
-- `readDir`, `exec`, `watch`, `open` — the runtime fulfills them
-- Results flow back as state updates, the render tree redraws
-- The app doesn't know or care if the runtime is local or remote
-- Effects are serializable — plain data, not function calls
-  - Any language can produce them
-  - The runtime can inspect, log, cache, replay, or deduplicate them
-  - Testable — assert an app emits the right effects without performing them
+Apps don't touch the filesystem, spawn processes, or open sockets directly. They declare intent.
 
-### Composition
+`readDir`, `exec`, `watch`, `open` — the runtime fulfills them. Results flow back as state updates and stream events; the app redraws.
 
-- Programs compose by subscribing to each other's streams — not by piping text
-- Streams are named, typed, and live — multiple consumers at once, no parsing
-- A transform is just a program that subscribes to a stream and emits a new one
-- Each intermediate stream is independently observable and subscribable
-- No process spawning per query — subscriptions are persistent, data just flows
+Effects are plain data, which means they are serializable, inspectable, loggable, cacheable, replayable, and testable. Any language can produce them. An app can be tested by asserting which effects it emits, without performing them.
 
-### The app is a guest
+## Apps are guests
 
-- Apps don't own the screen, the render loop, or system access
-- The platform handles layout, compositing, input routing, lifecycle, persistence
-- Multiple apps on screen at once
-- Apps survive disconnects — the runtime holds their state
+Apps don't own the screen, the render loop, or system access.
+
+The platform handles layout, compositing, input routing, lifecycle, persistence, and capability enforcement. Multiple apps can be visible at once.
+
+Apps survive disconnects — the runtime, not the client, holds their state. When you reconnect, the runtime sends back structured state: render trees, stream positions, session structure. Not a character grid. This is what makes Pond different from tmux.
 
 ## Architecture
 
@@ -52,74 +50,55 @@ Everything else is the platform's problem.
 ┌─────── Server ──────────────────┐
 │                                  │
 │  Apps ←──effects──→ Runtime      │
-│        (local pipes)             │
+│       ←─stream updates─→         │
 │                                  │
 └──────────────┬───────────────────┘
                │ SSH
-               │ (render trees, data, input events)
+               │ (render trees, stream data, input events)
 ┌──────────────┴───────────────────┐
 │            Client                 │
+│   native rendering + input + UX  │
 └───────────────────────────────────┘
 ```
 
-- **Apps + Runtime** live on the server. Effects (readDir, exec, watch) are fulfilled locally — they never cross the wire.
-- **The protocol** carries only the results: render trees, stream data, and input events. This is the project — everything else is an implementation detail.
-- **The client** receives render trees and data, sends input events back. It never sees effects. It's a view with a keyboard.
+- **Apps** describe UI and request work.
+- **Runtime** fulfills effects locally on the server, owns durable state, and manages sessions. Single static binary, no dependencies — uploaded over SSH on first connect. Wraps legacy programs (bash, vim) in PTYs as a compatibility layer; native Pond apps are the primary model.
+- **Client** renders structured UI, sends input events back. Roughly 6-7 message types in each direction. Swappable — any client works, no app knows the difference.
 
-### Runtime
-
-- Single static binary, no dependencies — uploaded over SSH on first connect, zero setup
-- Does everything apps can't: fulfills effects, manages sessions, wraps legacy programs (bash, vim) in PTYs
-- Holds state across disconnects — when you reconnect, it sends back structured state, not a character grid
-- The client gets actual data, render trees, and session structure — redraws natively
-- Think tmux, but the server keeps real state instead of a grid of characters
-
-### Client
-
-- Receives: render trees, data updates, program lifecycle events
-- Sends: input events (keys, clicks), subscriptions, session management
-- Roughly 6-7 message types in each direction — small, fixed, understandable
-- Swappable — any client works, no app knows the difference
-
-## What it replaces
-
-| Today | Pond |
-|---|---|
-| tmux | Client handles panes/tabs natively |
-| vim over SSH | Local editor, remote files |
-| SSH reconnects | Runtime persists, auto-reconnect on wake |
-| ncurses TUIs | Declarative widgets (lists, tables, trees) |
-| Scrollback in escape codes | Structured virtualized rendering |
-
+The wire carries state, not terminal emulation.
 
 ## Open questions
+
+### Blocking v1
 
 - **Are effects and streams one lifecycle or two?**
   - An `exec` effect completes instantly (process started) but its stdout stream runs for hours
   - A `watch` is ephemeral; an `exec` creates a durable resource (a PID)
   - If stream termination is coupled to effect completion, streams can't outlive their spawning effect, one effect can't produce multiple independent streams, and reconnection to running processes becomes impossible
-- **How does the protocol evolve without breaking clients?**
-  - If unknown message types are fatal, adding any new type breaks every deployed client
-  - If they're silently ignored, old clients coexist with new runtimes
-  - The harder question: when do you need a capability flag (behavioral change, like "I understand render diffs") vs. just adding a field to an existing message (data change, which MessagePack handles for free)?
-- **What can an app do by default?**
-  - Right now any app can `exec` arbitrary commands, read any path, subscribe to any stream — zero isolation
-  - Should apps declare capabilities upfront (Android permission model)?
-  - Should the default be CWD-only for reads, nothing for writes and exec unless explicitly granted?
 - **How does reconnection transfer state?**
-  - This is what makes Pond different from tmux (character grid replay)
   - It requires version-tagged render trees, sequence-numbered streams, and a protocol for deciding delta vs. snapshot
   - Should input events carry the render version they were based on so the server can detect stale operations?
   - What happens to effects that completed while the client was disconnected?
-- **Is SSH's flow control sufficient?**
-  - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
-  - TCP treats all bytes equally
-  - Does the protocol need its own priority queues (input before renders, renders before bulk data), per-stream throttling, and window-based flow control for large transfers?
 - **How are PTY programs represented on the wire?**
   - Raw escape sequences to the client (like xterm.js) or structured cell grids from a server-side VTE?
   - Raw bytes mean every client must embed a terminal emulator
   - Cell grids mean the protocol must specify the cell format as a first-class commitment — but give structured reconnection
   - Server-side VTE locks the protocol's capability ceiling to the VTE library's ceiling
+- **Is SSH's flow control sufficient?**
+  - A single fast producer (e.g. `find /` streaming results) fills the SSH send buffer and freezes every program's render updates plus the user's keystroke latency
+  - TCP treats all bytes equally
+  - Does the protocol need its own priority queues (input before renders, renders before bulk data), per-stream throttling, and window-based flow control for large transfers?
+- **What can an app do by default?**
+  - Right now any app can `exec` arbitrary commands, read any path, subscribe to any stream — zero isolation
+  - Should apps declare capabilities upfront (Android permission model)?
+  - Should the default be CWD-only for reads, nothing for writes and exec unless explicitly granted?
+
+### Can wait
+
+- **How does the protocol evolve without breaking clients?**
+  - If unknown message types are fatal, adding any new type breaks every deployed client
+  - If they're silently ignored, old clients coexist with new runtimes
+  - The harder question: when do you need a capability flag (behavioral change, like "I understand render diffs") vs. just adding a field to an existing message (data change, which MessagePack handles for free)?
 - **Where does input translation happen?**
   - For native Pond widgets the client can translate "user pressed j" into "select row 4" with zero round trips
   - For PTY programs the runtime must translate structured key events back to escape sequences, which requires tracking terminal mode state
@@ -140,14 +119,6 @@ Everything else is the platform's problem.
   - Shell startup banners and `~/.bashrc` output corrupt framing
   - The runtime must daemonize without dying on SIGHUP when SSH drops
   - Binary upload (5-10MB) over a slow uplink blocks everything until complete
-
-## Findings
-
-- **No distributed systems machinery needed.** One server, one client, ordered transport, server is authority. No CRDTs, no vector clocks, no consensus. Revisit only for multi-user collaboration
-- **Reconnect is the killer feature.** Tmux replays a character grid (~50-200KB every time). Pond sends versioned deltas (~2KB). But only if versioning and snapshot-or-delta selection are nailed
-- **Steady-state monitoring is 100-375x more bandwidth-efficient** than terminal redraws. A 1Hz htop goes from ~25KB/sec to ~80B/sec after the initial render tree
-- **Program identity comes from the connection, not the message body.** Each app communicates over its own pipe — the runtime stamps program identity from the file descriptor. Apps can't spoof each other
-- **PTY programs are fundamentally more expensive** than native Pond apps — per-keystroke overhead is 55x (55 bytes vs 1 byte), plus VTE parsing and cell diffing on every frame
 
 ## Status
 
