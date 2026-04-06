@@ -48,9 +48,23 @@ Everything else is the platform's problem.
 
 ## Architecture
 
-- **Protocol** — wire format between runtime and client. This is the project — everything else is an implementation detail.
-- **Runtime** — persistent daemon on servers. Manages sessions, fulfills effects, holds state across disconnects.
-- **Client** — anything that speaks the protocol. Native app, web page, TUI — doesn't matter.
+```
+┌─────── Server ──────────────────┐
+│                                  │
+│  Apps ←──effects──→ Runtime      │
+│        (local pipes)             │
+│                                  │
+└──────────────┬───────────────────┘
+               │ SSH
+               │ (render trees, data, input events)
+┌──────────────┴───────────────────┐
+│            Client                 │
+└───────────────────────────────────┘
+```
+
+- **Apps + Runtime** live on the server. Effects (readDir, exec, watch) are fulfilled locally — they never cross the wire.
+- **The protocol** carries only the results: render trees, stream data, and input events. This is the project — everything else is an implementation detail.
+- **The client** receives render trees and data, sends input events back. It never sees effects. It's a view with a keyboard.
 
 ### Runtime
 
@@ -59,6 +73,13 @@ Everything else is the platform's problem.
 - Holds state across disconnects — when you reconnect, it sends back structured state, not a character grid
 - The client gets actual data, render trees, and session structure — redraws natively
 - Think tmux, but the server keeps real state instead of a grid of characters
+
+### Client
+
+- Receives: render trees, data updates, program lifecycle events
+- Sends: input events (keys, clicks), subscriptions, session management
+- Roughly 6-7 message types in each direction — small, fixed, understandable
+- Swappable — any client works, no app knows the difference
 
 ## What it replaces
 
